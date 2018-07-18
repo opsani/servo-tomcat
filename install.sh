@@ -11,6 +11,7 @@ curl -s -O https://raw.githubusercontent.com/opsani/servo/master/servo
 chmod +x servo
 
 # Install init script
+cp -a optune-servo.service /etc/systemd/system/optune-servo.service
 systemctl daemon-reload
 systemctl enable optune-servo
 
