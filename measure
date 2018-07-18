@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+
+from measure import Measure, ST_FAILED
+
+DESC="Stub measure driver for Opsani Optune"
+VERSION="1.0.0"
+HAS_CANCEL=False
+PROGRESS_INTERVAL=30
+
+class Stub(Measure):
+
+    # overwrites super
+    def describe(self):
+        return {
+            'perf': {
+                'unit': 'requests/second',
+            }
+        }
+
+    # overwrites super
+    def measure(self):
+
+        # construct result:  use computed value for perf metric
+        metrics = {
+            'perf': {
+                'value' : 1,
+                'annotation': "Stubbed value",
+            }
+        }
+        annotations = {}
+
+        return metrics, annotations
+
+if __name__ == '__main__':
+    driver = Stub(VERSION, DESC, HAS_CANCEL, PROGRESS_INTERVAL)
+    driver.run()
