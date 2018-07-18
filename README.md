@@ -3,6 +3,12 @@
 
 ## Installation
 
+- Install python3 from EPEL (if not present):
+```
+rpm -ivh http://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+yum install -y python34 python34-typing python34-requests.noarch python34-PyYAML
+```
+
 - checkout this repository
 ```
 mkdir -p /opt/optune/
