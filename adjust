@@ -48,9 +48,10 @@ HAS_CANCEL = False
 DESC_FILE = "./app-desc.yaml"
 DRIVER_NAME="tomcat"
 JAVA_PRINT_FLAGS = "-XX:+PrintFlagsFinal -version"
+JAVA_EXEC_CMD = 'exec ${JAVA_CMD} ${APP_ARGS}'
 
 # Regexp to be use to update tomcat command line in otrder to get java settings
-JAVA_CMD_RE = '^(command="\$java \$java_args .*)(org\.apache\.catalina\.startup\.Bootstrap start)"$'
+JAVA_CMD_RE = r'^(.*)(org.apache.catalina.startup.Bootstrap \\)$'
 
 
 OPTUNE_DRIVER_ANCHOR = "__OPTUNE_DRIVER_ANCHOR__"
@@ -235,8 +236,9 @@ class TomcatDriver(Adjust):
             for line in fh.readlines():
                 line = line.decode()
 
-                updated_line = line_xfrom_fn(line)
+                updated_line, is_last = line_xfrom_fn(line)
                 lines.append(updated_line)
+                if is_last: break
 
         # Create new temp file with modified content and upload to remote host
         _, temp_file = tempfile.mkstemp()
@@ -259,13 +261,12 @@ class TomcatDriver(Adjust):
         def line_xfrom_fn(line):
             m = re.search(JAVA_CMD_RE, line)
             if not m:
-                return line
+                return line, False
             else:
-                ret_line = 'echo ' + OPTUNE_DRIVER_ANCHOR + '\n'
-                ret_line += m.group(1) + JAVA_PRINT_FLAGS + '"\n'
-                ret_line += '$command\n'
-                ret_line += 'exit $?\n'
-                return ret_line
+                ret_line = m.group(1) + JAVA_PRINT_FLAGS + '"\n\n'
+                ret_line += 'echo ' + OPTUNE_DRIVER_ANCHOR + '\n'
+                ret_line += JAVA_EXEC_CMD + '\n'
+                return ret_line, True
 
         self._update_remote_tomcat_start_script(
             host, tomcat_start_path, tomcat_start_path_tmp, ssh_opts,
@@ -388,9 +389,10 @@ class TomcatDriver(Adjust):
                 m = re.search(JAVA_CMD_RE, line)
 
                 if not m:
-                    return line
+                    return line, False
                 else:
-                    return m.group(1) + java_settings + " " + m.group(2) + '"\n'
+                    ret_line = m.group(1) + java_settings + " " + m.group(2) + '\n'
+                    return ret_line, False
 
             # Update tomcat config
             self._update_remote_tomcat_start_script(
