@@ -37,7 +37,9 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import yaml
+import requests
 
 from adjust import Adjust
 
@@ -49,6 +51,8 @@ DESC_FILE = "./app-desc.yaml"
 DRIVER_NAME="tomcat"
 JAVA_PRINT_FLAGS = "-XX:+PrintFlagsFinal -version"
 JAVA_EXEC_CMD = 'exec ${JAVA_CMD} ${APP_ARGS}'
+
+HCK_SLEEP_S = 5
 
 # Regexp to be use to update tomcat command line in otrder to get java settings
 JAVA_CMD_RE = r'^(.*)(org.apache.catalina.startup.Bootstrap \\)$'
@@ -415,6 +419,41 @@ class TomcatDriver(Adjust):
 
             # Restart tomcat
             self._run_remote_cmd(host, tomcat_restart_cmd, ssh_opts)
+
+            # Run healtcheck
+            if not 'health_check_url' in desc["driver"][DRIVER_NAME]:
+                self.debug("Skipping healthcheck")
+                continue
+
+            hchk_url = desc["driver"][DRIVER_NAME]['health_check_url'].format(host)
+            hchk_timeout = desc["driver"][DRIVER_NAME]["health_check_timeout"]
+            hchk_ok_string = desc["driver"][DRIVER_NAME]["health_check_ok_string"]
+
+            run_until_ts = time.time() + hchk_timeout
+            host_healthy = False
+
+            while time.time() < run_until_ts:
+                self.debug("Running healthcheck for url", hchk_url)
+                try:
+                    r = requests.get(hchk_url, verify=False)
+                    assert(r.status_code == 200), \
+                        "Healthcheck returned status " + str(r.status_code)
+                    assert(hchk_ok_string in r.text), \
+                        "Did not find string '{}' in healthcheck response".format(
+                            hchk_ok_string)
+
+                    host_healthy = True
+                    self.debug("Healthcheck succeeded")
+                    break
+                except Exception as e:
+                    self.debug("Healthcheck try failed, error was:", e)
+                    time.sleep(HCK_SLEEP_S)
+
+            if not host_healthy:
+                raise Exception(
+                    "Host {} did not return healthcheck reponse {} in {} seconds".format(
+                        host, hchk_ok_string, hchk_timeout))
+
 
         self.debug("Sucessfully updated all settings")
 
