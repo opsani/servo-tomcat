@@ -255,7 +255,8 @@ class TomcatDriver(Adjust):
         finally:
             os.unlink(temp_file)
 
-    def _get_curr_java_settings(self, host, tomcat_start_path, ssh_opts):
+    def _get_java_settings(self, host, tomcat_start_path, ssh_opts, extra_settings):
+
         tomcat_start_path_tmp = tomcat_start_path + '.tmp'
 
         def line_xfrom_fn(line):
@@ -263,7 +264,8 @@ class TomcatDriver(Adjust):
             if not m:
                 return line, False
             else:
-                ret_line = m.group(1) + JAVA_PRINT_FLAGS + '"\n\n'
+                ret_line = m.group(1) + extra_settings + \
+                    " " + JAVA_PRINT_FLAGS + '"\n\n'
                 ret_line += 'echo ' + OPTUNE_DRIVER_ANCHOR + '\n'
                 ret_line += JAVA_EXEC_CMD + '\n'
                 return ret_line, True
@@ -278,8 +280,10 @@ class TomcatDriver(Adjust):
         # Parse JVM settings
         return self._parse_jvm_settings(out)
 
+    def _get_curr_java_settings(self, host, tomcat_start_path, ssh_opts):
+        return self._get_java_settings(host, tomcat_start_path, ssh_opts, "")
 
-
+    # Overwritten
     def query(self):
         # Parse app descriptor
         desc = self._parse_app_desc()
@@ -324,6 +328,7 @@ class TomcatDriver(Adjust):
 
         return ret
 
+    # Overwritten
     def adjust(self):
         # Parse app descriptor
         desc = self._parse_app_desc()
@@ -385,13 +390,22 @@ class TomcatDriver(Adjust):
                 else:
                     java_settings += " -XX:{}={}".format(k, v)
 
+            # Do a dry run with the new settings
+            try:
+                self._get_java_settings(
+                    host, tomcat_start_path, ssh_opts, java_settings)
+            except Exception as e:
+                raise Exception(
+                    "Failed to do a dry run for adjustment: {}".format(str(e))
+                )
+
             def line_xfrom_fn(line):
                 m = re.search(JAVA_CMD_RE, line)
 
                 if not m:
                     return line, False
                 else:
-                    ret_line = m.group(1) + java_settings + " " + m.group(2) + '\n'
+                    ret_line = java_settings + " " + m.group(2) + '\n'
                     return ret_line, False
 
             # Update tomcat config
