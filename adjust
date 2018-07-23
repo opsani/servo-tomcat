@@ -287,6 +287,25 @@ class TomcatDriver(Adjust):
     def _get_curr_java_settings(self, host, tomcat_start_path, ssh_opts):
         return self._get_java_settings(host, tomcat_start_path, ssh_opts, "")
 
+    def _get_instances(self, desc):
+        svc_name = list(desc["components"].keys())[0]
+
+        driver_desc = desc["driver"][DRIVER_NAME]
+
+        if "consul_url" in driver_desc:
+            self.debug("Getting list of instances from consul at",
+                       driver_desc["consul_url"])
+            r = requests.get(
+                driver_desc["consul_url"],
+                verify=driver_desc.get("consul_cert", True))
+
+            hosts = list(map(lambda x: x["Node"]["Address"], r.json()))
+        else:
+            self.debug("Getting list of instances from descriptor")
+            hosts = driver_desc["instances"][svc_name]
+
+        return hosts
+
     # Overwritten
     def query(self):
         # Parse app descriptor
@@ -297,7 +316,7 @@ class TomcatDriver(Adjust):
         ssh_opts = self._get_ssh_opts_from_desc(desc["driver"][DRIVER_NAME])
 
         # TODO: do for each instance and make sure results match
-        host = desc["driver"][DRIVER_NAME]["instances"][svc_name][0]
+        host = self._get_instances(desc)[0]
 
         tomcat_start_path = desc["driver"][DRIVER_NAME]["start_file"]
 
@@ -345,7 +364,7 @@ class TomcatDriver(Adjust):
 
         tomcat_restart_cmd = desc["driver"][DRIVER_NAME]["restart_cmd"].split()
 
-        hosts = desc["driver"][DRIVER_NAME]["instances"][svc_name]
+        hosts = self._get_instances(desc)
 
         # Validate input
         if not "application" in self.input_data:
