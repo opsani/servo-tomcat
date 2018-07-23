@@ -24,14 +24,17 @@ cd servo-tomcat
 
 - Create driver config: `app-desc.yaml`. Example:
 ```
+
 driver:
   tomcat:
-    start_file: /path/to/tomcat.start
-    restart_cmd: /path/to/myapp.restart
-    ssh_opts: "-o user=myUser"
-    instances:
-      gui:
-        - 127.0.0.1
+    consul_url: http://example.com/foo
+    consul_cert: /path/to/cert.pem
+    health_check_url: "http://{}/healthcheck"
+    health_check_timeout: 10
+    health_check_ok_string: "<STATUS>OK</STATUS>"
+    start_file: /tmp/tomcat.start.new
+    restart_cmd: "true"
+    ssh_opts: "-o user=root"
 
 components:
   gui:
@@ -40,8 +43,9 @@ components:
        MaxHeapSize: {}
        MaxGCPauseMillis: {}
        MaxGCMinorPauseMillis: {}
-       GCTimeRatio: {}
        UseParallelOldGC: {}
+       GCTimeRatio: {}
+
 ```
 
 - Create servo config: `servo.cfg`. Example:
