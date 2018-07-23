@@ -150,11 +150,39 @@ class TomcatDriver(Adjust):
             raise Exception(
                 "App descriptor error: must have exactly one component")
 
-        # TODO: check that we have list of instances for each comp
+        drvr = d["driver"][DRIVER_NAME]
+
+        # Make sure Healthcheck config is present
+        assert("health_check_url" in drvr and \
+                isinstance(drvr["health_check_url"], str)), \
+            "Missing or invalid driver configuration: health_check_url"
+
+        assert("health_check_timeout" in drvr and
+               isinstance(drvr["health_check_timeout"], int)), \
+            "Missing or invalid driver configuration: health_check_timeout"
+
+        assert("health_check_ok_string" in drvr and
+               isinstance(drvr["health_check_ok_string"], str)), \
+            "Missing or invalid driver configuration: health_check_ok_string"
+
+        # Make sure we have consul config or list of instances
+        assert(
+            ("consul_url" in drvr and isinstance(drvr["consul_url"], str)) or \
+            ("instances" in drvr and isinstance(drvr["instances"], dict))
+            ), \
+            "Missing or invalid driver configuration: provide either 'consul_url' or 'instances'"
 
         # TODO: check that we have commands to start/stop tomcat service
+        # Make sure Healthcheck config is present
+        assert("start_file" in drvr and
+               isinstance(drvr["start_file"], str)), \
+            "Missing or invalid driver configuration: start_file"
 
         # TODO: check that we have a path to tomcat start script
+        # Make sure Healthcheck config is present
+        assert("restart_cmd" in drvr and
+               isinstance(drvr["restart_cmd"], str)), \
+            "Missing or invalid driver configuration: restart_cmd"
 
         return d
 
