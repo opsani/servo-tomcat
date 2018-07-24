@@ -300,6 +300,7 @@ class TomcatDriver(Adjust):
                     " " + JAVA_PRINT_FLAGS + '"\n\n'
                 ret_line += 'echo ' + OPTUNE_DRIVER_ANCHOR + '\n'
                 ret_line += JAVA_EXEC_CMD + '\n'
+                ret_line += 'exit 0\n'
                 return ret_line, True
 
         self._update_remote_tomcat_start_script(
@@ -310,7 +311,10 @@ class TomcatDriver(Adjust):
         out = self._run_remote_cmd(host, [tomcat_start_path_tmp], ssh_opts)
 
         # Parse JVM settings
-        return self._parse_jvm_settings(out)
+        settings = self._parse_jvm_settings(out)
+        assert(settings), "Failed to get Java settings, output was: {}".format(out)
+
+        return settings
 
     def _get_curr_java_settings(self, host, tomcat_start_path, ssh_opts):
         return self._get_java_settings(host, tomcat_start_path, ssh_opts, "")
