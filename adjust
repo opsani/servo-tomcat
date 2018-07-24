@@ -50,7 +50,7 @@ HAS_CANCEL = False
 DESC_FILE = "./app-desc.yaml"
 DRIVER_NAME="tomcat"
 JAVA_PRINT_FLAGS = "-XX:+PrintFlagsFinal -version"
-JAVA_EXEC_CMD = 'exec ${JAVA_CMD} ${APP_ARGS}'
+JAVA_EXEC_CMD = '${JAVA_CMD} ${APP_ARGS}'
 
 HCK_SLEEP_S = 5
 
