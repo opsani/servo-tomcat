@@ -321,11 +321,13 @@ class TomcatDriver(Adjust):
         driver_desc = desc["driver"][DRIVER_NAME]
 
         if "consul_url" in driver_desc:
+            cert_path=driver_desc.get("consul_cert", True) 
             self.debug("Getting list of instances from consul at",
-                       driver_desc["consul_url"])
+                       driver_desc["consul_url"], cert_path)
+            
             r = requests.get(
                 driver_desc["consul_url"],
-                verify=driver_desc.get("consul_cert", True))
+                cert=cert_path)
 
             hosts = list(map(lambda x: x["Node"]["Address"], r.json()))
         else:
