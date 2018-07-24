@@ -299,7 +299,7 @@ class TomcatDriver(Adjust):
             
             r = requests.get(
                 driver_desc["consul_url"],
-                verify=cert_path)
+                cert=cert_path)
 
             hosts = list(map(lambda x: x["Node"]["Address"], r.json()))
         else:
