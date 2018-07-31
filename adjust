@@ -11,23 +11,32 @@ adjust --info
 adjust --query app_name
 adjust app_name <settings-file.json
 This script requires a configuration file placed at a fixed location (see
-DESC_FILE constant below). The file should contain the complete formatted
+CFG_FILE constant below). The file should contain the complete formatted
 reply to be sent in response to '--query' (see the TDR External Commands draft
 document), including default values for all settings (which should match the
 value the application would use in case the setting is not provided explicitly
 or is empty). The key under 'components' is the name service to be adjusted
 
-Example DESC_FILE:
+Example CFG_FILE:
 
-components:
-  tomcat:
-     settings:
-       InitialHeapSize: {}
-       MaxHeapSize: {}
-       MaxGCPauseMillis: {}
-       MaxGCMinorPauseMillis: {}
-       GCTimeRatio: {}
+tomcat:
+  consul_url: http://example.com/foo
+  health_check_url: "http://{}:8080/bar"
+  health_check_timeout: 10
+  health_check_ok_string: "<STATUS>OK</STATUS>"
+  start_file: /tmp/tomcat.start.new
+  restart_cmd: /tmp/tomcat.start.new 0<&- >/dev/null 2>&1 &
+  ssh_opts: "-o user=root"
 
+  components:
+    gui:
+      settings:
+        InitialHeapSize: {}
+        MaxHeapSize: {}
+        MaxGCPauseMillis: {}
+        MaxGCMinorPauseMillis: {}
+        UseParallelOldGC: {}
+        GCTimeRatio: {}
 """
 
 
@@ -47,7 +56,7 @@ DESC = "Tomcat adjust driver for Opsani Optune"
 VERSION = "1.0.0"
 HAS_CANCEL = False
 
-DESC_FILE = "./app-desc.yaml"
+CFG_FILE = "./config.yaml"
 DRIVER_NAME="tomcat"
 JAVA_PRINT_FLAGS = "-XX:+PrintFlagsFinal -version"
 JAVA_EXEC_CMD = '${JAVA_CMD} ${APP_ARGS}'
@@ -125,66 +134,70 @@ class TomcatDriver(Adjust):
 
         return java_curr_settings
 
-    def _parse_app_desc(self):
+    def _parse_cfg(self):
         '''
         load the user-defined application descriptor
         '''
 
         try:
-            f = open(DESC_FILE)
+            f = open(CFG_FILE)
             d = yaml.load(f)
         except IOError as e:
             raise Exception(
-                "cannot read configuration from {}:{}".format(DESC_FILE, e.strerror))
+                "cannot read configuration from {}:{}".format(CFG_FILE, e.strerror))
         except yaml.error.YAMLError as e:
-            raise Exception("syntax error in {}: {}".format(DESC_FILE, str(e)))
+            raise Exception("syntax error in {}: {}".format(CFG_FILE, str(e)))
         # everything else: raise
 
         # Valchk
-        if not "components" in d:
+        assert(DRIVER_NAME in d), \
+            "Missing driver configuration: missing {} section".format(
+                DRIVER_NAME)
+
+        cfg = d[DRIVER_NAME]
+
+        if not "components" in cfg:
             raise Exception(
-                "Missing components key in app descriptor {}".format(DESC_FILE))
+                "Missing driver configuration: Missing components key.")
 
         # Valchk
-        if len(d["components"].keys()) != 1:
+        if len(cfg["components"].keys()) != 1:
             raise Exception(
                 "App descriptor error: must have exactly one component")
 
-        drvr = d["driver"][DRIVER_NAME]
-
         # Make sure Healthcheck config is present
-        assert("health_check_url" in drvr and \
-                isinstance(drvr["health_check_url"], str)), \
+        assert("health_check_url" in cfg and \
+                isinstance(cfg["health_check_url"], str)), \
             "Missing or invalid driver configuration: health_check_url"
 
-        assert("health_check_timeout" in drvr and
-               isinstance(drvr["health_check_timeout"], int)), \
+        assert("health_check_timeout" in cfg and
+               isinstance(cfg["health_check_timeout"], int)), \
             "Missing or invalid driver configuration: health_check_timeout"
 
-        assert("health_check_ok_string" in drvr and
-               isinstance(drvr["health_check_ok_string"], str)), \
+        assert("health_check_ok_string" in cfg and
+               isinstance(cfg["health_check_ok_string"], str)), \
             "Missing or invalid driver configuration: health_check_ok_string"
 
         # Make sure we have consul config or list of instances
         assert(
-            ("consul_url" in drvr and isinstance(drvr["consul_url"], str)) or \
-            ("instances" in drvr and isinstance(drvr["instances"], dict))
+            ("consul_url" in cfg and isinstance(cfg["consul_url"], str)) or \
+            ("instances" in cfg and isinstance(cfg["instances"], dict))
             ), \
             "Missing or invalid driver configuration: provide either 'consul_url' or 'instances'"
 
         # TODO: check that we have commands to start/stop tomcat service
         # Make sure Healthcheck config is present
-        assert("start_file" in drvr and
-               isinstance(drvr["start_file"], str)), \
+        assert("start_file" in cfg and
+               isinstance(cfg["start_file"], str)), \
             "Missing or invalid driver configuration: start_file"
 
         # TODO: check that we have a path to tomcat start script
         # Make sure Healthcheck config is present
-        assert("restart_cmd" in drvr and
-               isinstance(drvr["restart_cmd"], str)), \
+        assert("restart_cmd" in cfg and
+               isinstance(cfg["restart_cmd"], str)), \
             "Missing or invalid driver configuration: restart_cmd"
 
-        return d
+        return cfg
 
     def _get_remote_file(self, host, remote_path, local_path, ssh_opts):
 
@@ -247,9 +260,9 @@ class TomcatDriver(Adjust):
         return out
 
 
-    def _get_ssh_opts_from_desc(self, desc):
+    def _get_ssh_opts_from_desc(self, cfg):
         try:
-            ssh_opts = desc["ssh_opts"].split()
+            ssh_opts = cfg["ssh_opts"].split()
         except Exception as e:
             ssh_opts = []
 
@@ -319,25 +332,23 @@ class TomcatDriver(Adjust):
     def _get_curr_java_settings(self, host, tomcat_start_path, ssh_opts):
         return self._get_java_settings(host, tomcat_start_path, ssh_opts, "")
 
-    def _get_instances(self, desc):
-        svc_name = list(desc["components"].keys())[0]
+    def _get_instances(self, cfg):
+        svc_name = list(cfg["components"].keys())[0]
 
-        driver_desc = desc["driver"][DRIVER_NAME]
-
-        if "consul_url" in driver_desc:
-            cert_path=driver_desc.get("consul_cert", None)
+        if "consul_url" in cfg:
+            cert_path = cfg.get("consul_cert", None)
             self.debug("Getting list of instances from consul at",
-                       driver_desc["consul_url"], cert_path)
+                       cfg["consul_url"], cert_path)
 
             r = requests.get(
-                driver_desc["consul_url"],
+                cfg["consul_url"],
                 cert=cert_path,
                 verify=False)
 
             hosts = list(map(lambda x: x["Node"]["Address"], r.json()))
         else:
             self.debug("Getting list of instances from descriptor")
-            hosts = driver_desc["instances"][svc_name]
+            hosts = cfg["instances"][svc_name]
 
         self.debug("Using instances:", hosts)
 
@@ -346,22 +357,22 @@ class TomcatDriver(Adjust):
     # Overwritten
     def query(self):
         # Parse app descriptor
-        desc = self._parse_app_desc()
+        cfg = self._parse_cfg()
 
-        svc_name = list(desc["components"].keys())[0]
+        svc_name = list(cfg["components"].keys())[0]
 
-        ssh_opts = self._get_ssh_opts_from_desc(desc["driver"][DRIVER_NAME])
+        ssh_opts = self._get_ssh_opts_from_desc(cfg)
 
         # TODO: do for each instance and make sure results match
-        host = self._get_instances(desc)[0]
+        host = self._get_instances(cfg)[0]
 
-        tomcat_start_path = desc["driver"][DRIVER_NAME]["start_file"]
+        tomcat_start_path = cfg["start_file"]
 
         java_curr_settings = self._get_curr_java_settings(
             host, tomcat_start_path, ssh_opts)
 
         # Populate settings from the app descriptor with their actual values
-        settings = desc["components"][svc_name]["settings"]
+        settings = cfg["components"][svc_name]["settings"]
         for k in settings.keys():
             if not k in settings:
                 raise Exception(
@@ -391,17 +402,17 @@ class TomcatDriver(Adjust):
     # Overwritten
     def adjust(self):
         # Parse app descriptor
-        desc = self._parse_app_desc()
+        cfg = self._parse_cfg()
 
-        svc_name = list(desc["components"].keys())[0]
+        svc_name = list(cfg["components"].keys())[0]
 
-        ssh_opts = self._get_ssh_opts_from_desc(desc["driver"][DRIVER_NAME])
+        ssh_opts = self._get_ssh_opts_from_desc(cfg)
 
-        tomcat_start_path = desc["driver"][DRIVER_NAME]["start_file"]
+        tomcat_start_path = cfg["start_file"]
 
-        tomcat_restart_cmd = desc["driver"][DRIVER_NAME]["restart_cmd"].split()
+        tomcat_restart_cmd = cfg["restart_cmd"].split()
 
-        hosts = self._get_instances(desc)
+        hosts = self._get_instances(cfg)
 
         # Validate input
         if not "application" in self.input_data:
@@ -477,13 +488,13 @@ class TomcatDriver(Adjust):
             self._run_remote_cmd(host, tomcat_restart_cmd, ssh_opts)
 
             # Run healtcheck
-            if not 'health_check_url' in desc["driver"][DRIVER_NAME]:
+            if not 'health_check_url' in cfg:
                 self.debug("Skipping healthcheck")
                 continue
 
-            hchk_url = desc["driver"][DRIVER_NAME]['health_check_url'].format(host)
-            hchk_timeout = desc["driver"][DRIVER_NAME]["health_check_timeout"]
-            hchk_ok_string = desc["driver"][DRIVER_NAME]["health_check_ok_string"]
+            hchk_url = cfg['health_check_url'].format(host)
+            hchk_timeout = cfg["health_check_timeout"]
+            hchk_ok_string = cfg["health_check_ok_string"]
 
             run_until_ts = time.time() + hchk_timeout
             host_healthy = False
