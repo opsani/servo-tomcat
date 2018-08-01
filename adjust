@@ -309,8 +309,8 @@ class TomcatDriver(Adjust):
             if not m:
                 return line, False
             else:
-                ret_line = m.group(1) + extra_settings + \
-                    " " + JAVA_PRINT_FLAGS + '"\n\n'
+                s = extra_settings if extra_settings else m.group(1)
+                ret_line = s + " " + JAVA_PRINT_FLAGS + '"\n\n'
                 ret_line += 'echo ' + OPTUNE_DRIVER_ANCHOR + '\n'
                 ret_line += JAVA_EXEC_CMD + '\n'
                 ret_line += 'exit 0\n'
