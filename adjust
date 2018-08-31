@@ -58,7 +58,7 @@ HAS_CANCEL = False
 
 CFG_FILE = "./config.yaml"
 DRIVER_NAME="tomcat"
-JAVA_PRINT_FLAGS = "-XX:+PrintFlagsFinal -version"
+JAVA_PRINT_FLAGS = "-Xms10m -XX:+PrintFlagsFinal -version"
 JAVA_EXEC_CMD = '${JAVA_CMD} ${APP_ARGS}'
 
 HCK_SLEEP_S = 5
