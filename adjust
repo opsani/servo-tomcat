@@ -492,6 +492,13 @@ class TomcatDriver(Adjust):
                 self.debug("Skipping healthcheck")
                 continue
 
+            if 'health_check_initial_sleep' in cfg:
+                sleep_t = cfg['health_check_initial_sleep']
+                self.debug("Sleeping for {} seconds before doing a healthcheck"
+                    .format(sleep_t))
+
+                time.sleep(sleep_t)
+
             hchk_url = cfg['health_check_url'].format(host)
             hchk_timeout = cfg["health_check_timeout"]
             hchk_ok_string = cfg["health_check_ok_string"]

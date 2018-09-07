@@ -13,6 +13,7 @@ The following parameters can be configured for the driver. The configuration sho
 * `consul_cert`: Certificate to use when querying consul. Optional.
 * `health_check_url`: Healthcheck url, used to determine if tomcat service has successfully restarted
 * `health_check_timeout`: How long to keep trying to check health before giving up
+* `health_check_initial_sleep`: How long to sleep (in seconds) after running the restart command before starting to poll the healthcheck url. If not specified, start checking immediately
 * `health_check_ok_string`: String to look for in the output of the healthcheck request
 * `start_file`: Tomcat start file that will be modified by Optune in order to change settings
 * `restart_cmd`: Command to run in order to restart Tomcat after settings in `start_file` are changed
@@ -26,6 +27,7 @@ tomcat:
   consul_cert: /path/to/cert.pem
   health_check_url: "http://{}/healthcheck"
   health_check_timeout: 10
+  health_check_initial_sleep: 60
   health_check_ok_string: "<STATUS>OK</STATUS>"
   start_file: /tmp/tomcat.start.new
   restart_cmd: /tmp/tomcat.start.new 0<&- >/dev/null 2>&1 &
