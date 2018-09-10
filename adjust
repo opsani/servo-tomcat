@@ -57,7 +57,7 @@ VERSION = "1.0.0"
 HAS_CANCEL = False
 
 CFG_FILE = "./config.yaml"
-DRIVER_NAME="tomcat"
+DRIVER_NAME = "tomcat"
 JAVA_PRINT_FLAGS = "-Xms10m -XX:+PrintFlagsFinal -version"
 JAVA_EXEC_CMD = '${JAVA_CMD} ${APP_ARGS}'
 
@@ -68,6 +68,7 @@ JAVA_CMD_RE = r'^(.*)(org.apache.catalina.startup.Bootstrap \\)$'
 
 
 OPTUNE_DRIVER_ANCHOR = "__OPTUNE_DRIVER_ANCHOR__"
+
 
 class TomcatDriver(Adjust):
 
@@ -92,7 +93,6 @@ class TomcatDriver(Adjust):
         return_code = proc.wait()
 
         return return_code, out, err
-
 
     def _parse_jvm_settings(self, lines):
         '''
@@ -166,8 +166,8 @@ class TomcatDriver(Adjust):
                 "App descriptor error: must have exactly one component")
 
         # Make sure Healthcheck config is present
-        assert("health_check_url" in cfg and \
-                isinstance(cfg["health_check_url"], str)), \
+        assert("health_check_url" in cfg and
+               isinstance(cfg["health_check_url"], str)), \
             "Missing or invalid driver configuration: health_check_url"
 
         assert("health_check_timeout" in cfg and
@@ -180,9 +180,9 @@ class TomcatDriver(Adjust):
 
         # Make sure we have consul config or list of instances
         assert(
-            ("consul_url" in cfg and isinstance(cfg["consul_url"], str)) or \
+            ("consul_url" in cfg and isinstance(cfg["consul_url"], str)) or
             ("instances" in cfg and isinstance(cfg["instances"], dict))
-            ), \
+        ), \
             "Missing or invalid driver configuration: provide either 'consul_url' or 'instances'"
 
         # TODO: check that we have commands to start/stop tomcat service
@@ -211,7 +211,8 @@ class TomcatDriver(Adjust):
         if exit_code != 0:
             msg = "Failed to get remote file {}, from host {}. Command {} " + \
                 "returned exit code {}. STDOUT {}, STDERR {}"
-            msg = msg.format(remote_path, host, str(cmd), exit_code, str(out), str(err))
+            msg = msg.format(remote_path, host, str(
+                cmd), exit_code, str(out), str(err))
             raise Exception(msg)
 
     def _put_remote_file(self, host, local_path, remote_path, ssh_opts):
@@ -226,7 +227,8 @@ class TomcatDriver(Adjust):
         if exit_code != 0:
             msg = "Failed to put file {}, to host {}. Command {} " + \
                 "returned exit code {}. STDOUT {}, STDERR {}"
-            msg = msg.format(remote_path, host, str(cmd), exit_code, str(out), str(err))
+            msg = msg.format(remote_path, host, str(
+                cmd), exit_code, str(out), str(err))
             raise Exception(msg)
 
         # Make file executable
@@ -259,7 +261,6 @@ class TomcatDriver(Adjust):
 
         return out
 
-
     def _get_ssh_opts_from_desc(self, cfg):
         try:
             ssh_opts = cfg["ssh_opts"].split()
@@ -283,7 +284,8 @@ class TomcatDriver(Adjust):
 
                 updated_line, is_last = line_xfrom_fn(line)
                 lines.append(updated_line)
-                if is_last: break
+                if is_last:
+                    break
 
         # Create new temp file with modified content and upload to remote host
         _, temp_file = tempfile.mkstemp()
@@ -374,7 +376,7 @@ class TomcatDriver(Adjust):
         # Populate settings from the app descriptor with their actual values
         settings = cfg["components"][svc_name]["settings"]
         for k in settings.keys():
-            if not k in settings:
+            if not k in java_curr_settings:
                 raise Exception(
                     "Counld not find setting {} in current JVM settings".format(k))
 
@@ -435,6 +437,9 @@ class TomcatDriver(Adjust):
 
         settings = self.input_data["application"]["components"][svc_name]["settings"]
 
+        input_user_data = self.input_data.get(
+            "control", {}).get("userdata", {})
+
         if not isinstance(settings, dict):
             raise Exception(
                 "Invalid input: settings for component {} must be a dict".format(
@@ -492,15 +497,23 @@ class TomcatDriver(Adjust):
                 self.debug("Skipping healthcheck")
                 continue
 
-            if 'health_check_initial_sleep' in cfg:
-                sleep_t = cfg['health_check_initial_sleep']
-                self.debug("Sleeping for {} seconds before doing a healthcheck"
-                    .format(sleep_t))
+            # Get health_check_initial_sleep from input data or config
+            hck_init_sleep = int(input_user_data.get(
+                "health_check_initial_sleep",
+                cfg.get('health_check_initial_sleep', 0)
+            ))
 
-                time.sleep(sleep_t)
+            if hck_init_sleep:
+                self.debug("Sleeping for {} seconds before doing a healthcheck"
+                           .format(hck_init_sleep))
+
+                time.sleep(hck_init_sleep)
 
             hchk_url = cfg['health_check_url'].format(host)
-            hchk_timeout = cfg["health_check_timeout"]
+            hchk_timeout = int(input_user_data.get(
+                "health_check_timeout",
+                cfg.get("health_check_timeout", 0)
+            ))
             hchk_ok_string = cfg["health_check_ok_string"]
 
             run_until_ts = time.time() + hchk_timeout
@@ -527,7 +540,6 @@ class TomcatDriver(Adjust):
                 raise Exception(
                     "Host {} did not return healthcheck reponse {} in {} seconds".format(
                         host, hchk_ok_string, hchk_timeout))
-
 
         self.debug("Sucessfully updated all settings")
 
