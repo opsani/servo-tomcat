@@ -9,6 +9,7 @@ Note: this driver requires `adjust.py` base class from the Optune servo core. It
 
 The following parameters can be configured for the driver. The configuration should be in a file named `config.yaml` in the same directory as the driver.
 
+* `n_concurrent_updates`: How many host to update in parallel, default: 1
 * `consul_url`: Url to use in order to get list of instances
 * `consul_cert`: Certificate to use when querying consul. Optional.
 * `health_check_url`: Healthcheck url, used to determine if tomcat service has successfully restarted

@@ -41,14 +41,16 @@ tomcat:
 
 
 from __future__ import print_function    # py2 compatibility
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import json
 import os
 import re
+import requests
 import subprocess
 import tempfile
 import time
 import yaml
-import requests
 
 from adjust import Adjust
 
@@ -71,6 +73,22 @@ OPTUNE_DRIVER_ANCHOR = "__OPTUNE_DRIVER_ANCHOR__"
 
 
 class TomcatDriver(Adjust):
+
+    def __init__(self, version, cli_desc, supports_cancel):
+        super().__init__(version, cli_desc, supports_cancel)
+        self.adjust_failed = False
+
+    # Raise an exception if adjust for a host has already failed. This can be
+    # used to stall adjusting of other hosts
+    def _check_for_failed_adjust(self, host):
+        if not self.adjust_failed:
+            return
+
+        msg = "Aborting adjust for host %s as another host has already failed" \
+            % host
+
+        self.debug(msg)
+        raise Exception(msg)
 
     def _run_cmd(self, cmd):
         '''
@@ -185,13 +203,11 @@ class TomcatDriver(Adjust):
         ), \
             "Missing or invalid driver configuration: provide either 'consul_url' or 'instances'"
 
-        # TODO: check that we have commands to start/stop tomcat service
         # Make sure Healthcheck config is present
         assert("start_file" in cfg and
                isinstance(cfg["start_file"], str)), \
             "Missing or invalid driver configuration: start_file"
 
-        # TODO: check that we have a path to tomcat start script
         # Make sure Healthcheck config is present
         assert("restart_cmd" in cfg and
                isinstance(cfg["restart_cmd"], str)), \
@@ -356,6 +372,111 @@ class TomcatDriver(Adjust):
 
         return hosts
 
+    def _adjust_host(
+        self,
+        host,
+        settings,
+        hchk_url,
+        hchk_timeout,
+        hchk_ok_string,
+        hck_init_sleep,
+        tomcat_start_path,
+        tomcat_restart_cmd,
+        ssh_opts):
+
+        self._check_for_failed_adjust(host)
+
+        self.debug("Updating host", host)
+
+        java_curr_settings = self._get_curr_java_settings(
+            host, tomcat_start_path, ssh_opts)
+
+        # Convert Optune seetings to java settings
+        java_settings = ""
+        for k in settings.keys():
+            v = settings[k]["value"]
+            curr = java_curr_settings[k]
+            if curr["type"] == "bool":
+                java_settings += " -XX:{}{}".format("+" if v else "-", k)
+            elif curr["type"] == "intx" or curr["type"] == "uint64_t" or curr["type"] == "uintx":
+                java_settings += " -XX:{}={}".format(k, int(v))
+            else:
+                java_settings += " -XX:{}={}".format(k, v)
+
+        self._check_for_failed_adjust(host)
+
+        # Do a dry run with the new settings
+        try:
+            self._get_java_settings(
+                host, tomcat_start_path, ssh_opts, java_settings)
+        except Exception as e:
+            raise Exception(
+                "Failed to do a dry run for adjustment: {}".format(str(e))
+            )
+
+        def line_xfrom_fn(line):
+            m = re.search(JAVA_CMD_RE, line)
+
+            if not m:
+                return line, False
+            else:
+                ret_line = java_settings + " " + m.group(2) + '\n'
+                return ret_line, False
+
+        self._check_for_failed_adjust(host)
+
+        # Update tomcat config
+        self._update_remote_tomcat_start_script(
+            host, tomcat_start_path, tomcat_start_path, ssh_opts,
+            line_xfrom_fn)
+
+        self._check_for_failed_adjust(host)
+
+        # Restart tomcat
+        self._run_remote_cmd(host, tomcat_restart_cmd, ssh_opts)
+
+
+        self._check_for_failed_adjust(host)
+
+        # Run healtcheck
+        if not hchk_url:
+            self.debug("Skipping healthcheck for host", host)
+            return
+
+        if hck_init_sleep:
+            self.debug(
+                "Sleeping for {} seconds before doing a healthcheck on host {}"
+                .format(hck_init_sleep, host))
+
+            time.sleep(hck_init_sleep)
+
+        run_until_ts = time.time() + hchk_timeout
+        host_healthy = False
+
+        while time.time() < run_until_ts:
+            self._check_for_failed_adjust(host)
+
+            self.debug("Running healthcheck for url", hchk_url)
+            try:
+                r = requests.get(hchk_url, verify=False)
+                assert(r.status_code == 200), \
+                    "Healthcheck returned status " + str(r.status_code)
+                assert(hchk_ok_string in r.text), \
+                    "Did not find string '{}' in healthcheck response".format(
+                        hchk_ok_string)
+
+                host_healthy = True
+                self.debug("Healthcheck succeeded for host", host)
+                break
+            except Exception as e:
+                self.debug("Healthcheck try failed, error was:", e)
+                time.sleep(HCK_SLEEP_S)
+
+        if not host_healthy:
+            raise Exception(
+                "Host {} did not return healthcheck reponse {} in {} seconds".format(
+                    host, hchk_ok_string, hchk_timeout))
+
     # Overwritten
     def query(self):
         # Parse app descriptor
@@ -446,102 +567,70 @@ class TomcatDriver(Adjust):
                     svc_name
                 ))
 
-        for host in hosts:
-            # TODO: What to do when one host fails?
+        # Get health_check_initial_sleep from input data or config
+        hck_init_sleep = int(input_user_data.get(
+            "health_check_initial_sleep",
+            cfg.get('health_check_initial_sleep', 0)
+        ))
 
-            self.debug("Updating host", host)
+        hchk_timeout = int(input_user_data.get(
+            "health_check_timeout",
+            cfg.get("health_check_timeout", 0)
+        ))
+        hchk_ok_string = cfg["health_check_ok_string"]
 
-            java_curr_settings = self._get_curr_java_settings(
-                host, tomcat_start_path, ssh_opts)
+        concurrent_hosts = int(cfg.get("n_concurrent_updates", 1))
+        futures = {}
 
-            # Convert Optune seetings to java settings
-            java_settings = ""
-            for k in settings.keys():
-                v = settings[k]["value"]
-                curr = java_curr_settings[k]
-                if curr["type"] == "bool":
-                    java_settings += " -XX:{}{}".format("+" if v else "-", k)
-                elif curr["type"] == "intx" or curr["type"] == "uint64_t" or curr["type"] == "uintx":
-                    java_settings += " -XX:{}={}".format(k, int(v))
+        self.debug("Updating hosts, %d at a time" % concurrent_hosts)
+        with ThreadPoolExecutor(max_workers=concurrent_hosts) as executor:
+            # submit work
+            for host in hosts:
+                if 'health_check_url' in cfg:
+                    hchk_url = cfg['health_check_url'].format(host)
                 else:
-                    java_settings += " -XX:{}={}".format(k, v)
+                    hchk_url = None
 
-            # Do a dry run with the new settings
-            try:
-                self._get_java_settings(
-                    host, tomcat_start_path, ssh_opts, java_settings)
-            except Exception as e:
-                raise Exception(
-                    "Failed to do a dry run for adjustment: {}".format(str(e))
-                )
+                future = executor.submit(
+                    self._adjust_host,host,
+                    settings,
+                    hchk_url,
+                    hchk_timeout,
+                    hchk_ok_string,
+                    hck_init_sleep,
+                    tomcat_start_path,
+                    tomcat_restart_cmd,
+                    ssh_opts)
 
-            def line_xfrom_fn(line):
-                m = re.search(JAVA_CMD_RE, line)
+                futures[future] = host
 
-                if not m:
-                    return line, False
-                else:
-                    ret_line = java_settings + " " + m.group(2) + '\n'
-                    return ret_line, False
+            # Get results
+            completed_hosts = 0
+            total_hosts = len(hosts)
 
-            # Update tomcat config
-            self._update_remote_tomcat_start_script(
-                host, tomcat_start_path, tomcat_start_path, ssh_opts,
-                line_xfrom_fn)
+            self.debug("Waiting for host updates")
 
-            # Restart tomcat
-            self._run_remote_cmd(host, tomcat_restart_cmd, ssh_opts)
+            for future in as_completed(futures):
+                host = futures[future]
 
-            # Run healtcheck
-            if not 'health_check_url' in cfg:
-                self.debug("Skipping healthcheck")
-                continue
-
-            # Get health_check_initial_sleep from input data or config
-            hck_init_sleep = int(input_user_data.get(
-                "health_check_initial_sleep",
-                cfg.get('health_check_initial_sleep', 0)
-            ))
-
-            if hck_init_sleep:
-                self.debug("Sleeping for {} seconds before doing a healthcheck"
-                           .format(hck_init_sleep))
-
-                time.sleep(hck_init_sleep)
-
-            hchk_url = cfg['health_check_url'].format(host)
-            hchk_timeout = int(input_user_data.get(
-                "health_check_timeout",
-                cfg.get("health_check_timeout", 0)
-            ))
-            hchk_ok_string = cfg["health_check_ok_string"]
-
-            run_until_ts = time.time() + hchk_timeout
-            host_healthy = False
-
-            while time.time() < run_until_ts:
-                self.debug("Running healthcheck for url", hchk_url)
                 try:
-                    r = requests.get(hchk_url, verify=False)
-                    assert(r.status_code == 200), \
-                        "Healthcheck returned status " + str(r.status_code)
-                    assert(hchk_ok_string in r.text), \
-                        "Did not find string '{}' in healthcheck response".format(
-                            hchk_ok_string)
-
-                    host_healthy = True
-                    self.debug("Healthcheck succeeded")
-                    break
+                    result = future.result()
                 except Exception as e:
-                    self.debug("Healthcheck try failed, error was:", e)
-                    time.sleep(HCK_SLEEP_S)
+                    self.debug('host %s failed to update: %s' % (host, e))
+                    future.cancel()
+                    self.adjust_failed = True
+                    raise
+                else:
+                    self.debug('host %s successfully updated' % host)
+                    completed_hosts += 1
+                    progress = int(100*completed_hosts/total_hosts)
+                    prog_data = {
+                        'progress': progress,
+                        'message': 'updated host %s' % host,
+                    }
+                    print(json.dumps(prog_data), flush=True)
 
-            if not host_healthy:
-                raise Exception(
-                    "Host {} did not return healthcheck reponse {} in {} seconds".format(
-                        host, hchk_ok_string, hchk_timeout))
-
-        self.debug("Sucessfully updated all settings")
+        self.debug("Sucessfully updated settings on all hosts")
 
 
 if __name__ == '__main__':
