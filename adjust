@@ -159,7 +159,7 @@ class TomcatDriver(Adjust):
 
         try:
             f = open(CFG_FILE)
-            d = yaml.load(f)
+            d = yaml.safe_load(f)
         except IOError as e:
             raise Exception(
                 "cannot read configuration from {}:{}".format(CFG_FILE, e.strerror))
@@ -361,7 +361,7 @@ class TomcatDriver(Adjust):
             r = requests.get(
                 cfg["consul_url"],
                 cert=cert_path,
-                verify=False)
+                verify=False) # nosec (Allow use of self-signed certs)
 
             hosts = list(map(lambda x: x["Node"]["Address"], r.json()))
         else:
@@ -458,7 +458,7 @@ class TomcatDriver(Adjust):
 
             self.debug("Running healthcheck for url", hchk_url)
             try:
-                r = requests.get(hchk_url, verify=False)
+                r = requests.get(hchk_url, verify=False) # nosec (Allow use of self-signed certs)
                 assert(r.status_code == 200), \
                     "Healthcheck returned status " + str(r.status_code)
                 assert(hchk_ok_string in r.text), \
